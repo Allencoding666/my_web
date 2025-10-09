@@ -15,8 +15,8 @@ export const executeTest = (data?: object) => {
   );
 };
 
-/** 執行測試ws */
-export const executeTestWs = () => {
+/** 連線ws */
+export const connectTestWs = () => {
   const ws: WebSocket = new WebSocket(testUrlWs("tests/ws/run_tests"));
   return ws;
 };

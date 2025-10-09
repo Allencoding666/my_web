@@ -1,4 +1,4 @@
-import { executeTest, checkConnection } from "@/api/testOperate";
+import { checkConnection, executeTest, connectTestWs } from "@/api/testOperate";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
@@ -14,12 +14,19 @@ export const useTestOperateStore = defineStore("testOperate", () => {
     }
     return result.value;
   };
+
   const execute = async () => {
     return await executeTest();
   };
+
+  const connectWs = async () => {
+    return await connectTestWs();
+  };
+
   return {
     result,
+    check,
     execute,
-    check
+    connectWs
   };
 });
