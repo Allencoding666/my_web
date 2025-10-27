@@ -1,25 +1,36 @@
-import { executeTest, checkConnection } from "@/api/testOperate";
+import {
+  apiCheckConnection,
+  apiExecuteTest,
+  wsConnect
+} from "@/api/testOperate";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
 export const useTestOperateStore = defineStore("testOperate", () => {
   const result = ref("default");
 
-  const check = async () => {
+  const stApiCheckConnection = async () => {
     try {
-      const res = await checkConnection();
+      const res = await apiCheckConnection();
       result.value = `連線成功: ${JSON.stringify(res)}`;
     } catch (error) {
       result.value = `連線失敗: ${error}`;
     }
     return result.value;
   };
-  const execute = async () => {
-    return await executeTest();
+
+  const stApiExecuteTest = async () => {
+    return await apiExecuteTest();
   };
+
+  const stWsConnect = async url => {
+    return await wsConnect(url);
+  };
+
   return {
     result,
-    execute,
-    check
+    stApiCheckConnection,
+    stApiExecuteTest,
+    stWsConnect
   };
 });

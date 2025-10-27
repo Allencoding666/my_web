@@ -1,4 +1,4 @@
 // export const baseUrlApi = (url: string) => `/api/${url}`;
-export const testUrlApi = (url: string) => `/testapi/${url}`;
+export const apiTestUrl = (url: string) => `/testapi/${url}`;
 
-export const testUrlWs = (url: string) => `/ws/${url}`;
+export const wsTestUrl = (url: string) => `/ws/${url}`;
