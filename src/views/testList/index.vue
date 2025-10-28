@@ -9,9 +9,9 @@ defineOptions({
 });
 
 const testOperateStore = useTestOperateStore();
-const { stApiCheckConnection, stApiExecuteTest, stWsConnect } =
+const { stApiCheckConnection, stApiExecuteTest, stWsConnect, stWsExecuteTest } =
   testOperateStore;
-const { result } = storeToRefs(testOperateStore);
+const { result, wsInstance, isWsOpen } = storeToRefs(testOperateStore);
 
 const { columns, filterTableData } = useColumns();
 </script>
