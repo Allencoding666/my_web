@@ -1,6 +1,6 @@
 import { message } from "@/utils/message";
 import { tableData } from "./data";
-import { ref, computed, onUnmounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useTestOperateStore } from "@/store/modules/testOperate";
 import { addDrawer } from "@/components/ReDrawer/index";
 import { storeToRefs } from "pinia";
@@ -12,6 +12,13 @@ export function useColumns() {
   // 從 store 中取得 allLogs 的響應式引用
   const { allLogs } = storeToRefs(testOperateStore);
 
+  // 在組件掛載時建立 WebSocket 連線
+  onMounted(() => {
+    testOperateStore.stWsConnect("tests/ws/test_manager").catch(error => {
+      message(`WebSocket 連線失敗: ${error.message}`, { type: "error" });
+    });
+  });
+
   const filterTableData = computed(() =>
     tableData.filter(
       data =>
@@ -20,39 +27,23 @@ export function useColumns() {
     )
   );
 
-  onUnmounted(() => {
-    // 離開頁面時可以選擇性地中斷連線
-    testOperateStore.wsInstance?.close();
-  });
-
   const handleExcuteTest = async row => {
     const testId = row.testId;
     message(`執行測試 ${testId}，點擊 LiveMessage 可以查看即時訊息`);
 
     // 每次執行測試時，為該 testId 建立一個新的 logs 陣列
-    allLogs.value.set(testId, []);
-    const logs = allLogs.value.get(testId);
-    // 清空上次的日誌
-    logs.length = 0;
-
     try {
-      logs.push({
-        text: `[${new Date().toLocaleTimeString()}] 開始連線...`
-      });
-      // 如果尚未連線，則等待連線成功
-      if (!testOperateStore.isWsOpen) {
-        await testOperateStore.stWsConnect("tests/ws/run_tests");
-      }
       testOperateStore.stWsExecuteTest(row.testId);
     } catch (error) {
-      logs.push({
-        text: `[${new Date().toLocaleTimeString()}] 連線ws失敗: ${error}`,
-        color: "red"
-      });
       message(`執行測試 ${testId} 失敗，請點擊 LiveMessage 查看即時訊息`, {
         type: "error"
       });
-      return;
+      // 將錯誤訊息記錄到 Log 中
+      const logs = allLogs.value.get(testId);
+      if (logs) {
+        logs.push({ text: `[ERROR] ${error.message}`, color: "red" });
+      }
+      return; // 發生錯誤時，中斷後續執行
     }
   };
 
@@ -89,18 +80,10 @@ export function useColumns() {
     });
   };
 
-  const StopTest = row => {
-    console.log(`StopTest clicked ${row}`);
-    // const testId = row.testId;
-    // const ws = testConnections.get(testId);
-    // if (ws) {
-    //   // 主動關閉連線。後續的清理工作會由 onclose 事件處理
-    //   ws.close();
-    //   testConnections.delete(testId);
-    //   message(`已送出停止測試 ${testId} 的請求`, { type: "warning" });
-    // } else {
-    //   message(`測試 ${testId} 不在執行中或已結束`, { type: "info" });
-    // }
+  const handleStopTest = row => {
+    const testId = row.testId;
+    testOperateStore.stWsStopTest(testId);
+    message(`已送出停止測試 ${testId} 的請求`, { type: "warning" });
   };
 
   const columns: TableColumnList = [
@@ -122,7 +105,7 @@ export function useColumns() {
       headerRenderer: () => (
         <el-input
           v-model={search.value}
-          size="middle"
+          size="default"
           clearable
           placeholder="輸入測試ID進行搜尋"
         />
@@ -130,20 +113,24 @@ export function useColumns() {
       cellRenderer: ({ row }) => (
         <>
           <el-button
-            size="middle"
+            size="default"
             type="primary"
             onClick={() => handleExcuteTest(row)}
           >
             ExcuteTest
           </el-button>
           <el-button
-            size="middle"
+            size="default"
             type="primary"
             onClick={() => liveMessage(row)}
           >
             LiveMessage
           </el-button>
-          <el-button size="middle" type="primary" onClick={() => StopTest(row)}>
+          <el-button
+            size="default"
+            type="danger"
+            onClick={() => handleStopTest(row)}
+          >
             StopTest
           </el-button>
         </>

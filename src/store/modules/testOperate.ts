@@ -7,7 +7,7 @@ import { ref } from "vue";
 // 定義 UI 函式庫接受的訊息類型
 type LogColor = "inherit" | "orange" | "red" | "green";
 
-// 定義後端 WebSocket 可能傳來的類型
+// 定義後端 WebSocket 可能傳來的類型 (用於顏色對照)
 type BackendMessageType = "info" | "warning" | "error" | "success";
 
 interface LogItem {
@@ -20,7 +20,9 @@ export const useTestOperateStore = defineStore("testOperate", () => {
   const wsInstance = ref<WebSocket | null>(null);
   const isWsOpen = ref(false);
   const allLogs = ref(new Map<string, LogItem[]>());
-  // 3. 建立一個強型別的對照表
+  // 新增一個暫存日誌的地方，它不是響應式的
+  const tempLogs = new Map<string, LogItem[]>();
+  // 建立一個強型別的對照表，來針對後端回傳的資料，決定log字體顏色
   const colorMap: Record<BackendMessageType, LogColor> = {
     info: "inherit",
     warning: "orange",
@@ -80,61 +82,7 @@ export const useTestOperateStore = defineStore("testOperate", () => {
         resolve(); // 連線成功時 resolve Promise
       };
 
-      wsInstance.value.onmessage = event => {
-        // 在這裡處理從後端收到的即時訊息
-        // 例如：更新測試日誌、進度條、測試結果等
-
-        try {
-          const messageData = JSON.parse(event.data);
-          const { test_id: testId, type, message: msg, log } = messageData;
-
-          if (!testId) {
-            console.warn("Received a message without testId:");
-            return;
-          }
-
-          const logs = allLogs.value.get(testId);
-          if (!logs) return;
-
-          const logItem: LogItem = {
-            text: `[${new Date().toLocaleTimeString()}] ${log}`
-          };
-
-          if (msg) {
-            message(msg, { type: type });
-          }
-
-          if (log) {
-            logItem.color = colorMap[type as BackendMessageType];
-            logs.push(logItem);
-          }
-
-          // // 判斷訊息類型
-          // if (type === "result") {
-          //   if (msg) {
-          //     message(msg, {
-          //       type: colorMap[status as "PASS" | "FAIL"]
-          //     });
-          //   }
-          //   if (log) {
-          //     logItem.color = status === "PASS" ? "green" : "red";
-          //     logs.push(logItem);
-          //   }
-          // } else if (type === "error") {
-          //   message(msg, { type: "error" });
-          //   logItem.color = "red";
-          //   logs.push(logItem);
-          // } else if (type === "warning") {
-          //   message(msg, { type: "warning" });
-          // }
-        } catch (e) {
-          // 如果不是 JSON 格式，當作一般日誌處理
-          // 這邊需要一個方法來確定這個日誌屬於哪個測試，
-          // 如果後端無法提供 test_id，這裡的處理會比較困難。
-          // 暫時假設所有非 JSON 訊息都添加到最後一個觸發的測試中 (這不是一個完美的解決方案)
-          console.warn("Received non-JSON message:", event.data, e);
-        }
-      };
+      wsInstance.value.onmessage = event => handleWsMessage(event.data);
 
       wsInstance.value.onclose = () => {
         isWsOpen.value = false;
@@ -153,20 +101,87 @@ export const useTestOperateStore = defineStore("testOperate", () => {
     });
   };
 
+  /**
+   * 處理 WebSocket 訊息的共用邏輯
+   * @param messageData 從 WebSocket 收到的已解析的 JSON 資料
+   */
+  const handleWsMessage = (messageData: any) => {
+    try {
+      const { test_id: testId, type, message: msg, log } = messageData;
+
+      if (!testId) {
+        console.warn("Received a message without testId:", messageData);
+        return;
+      }
+
+      // 確保 allLogs 中有該 testId 的條目
+      if (!allLogs.value.has(testId)) {
+        allLogs.value.set(testId, []);
+      }
+      // 將log存入暫存區
+      const logs = tempLogs.get(testId);
+      if (!logs) return; // 如果沒有這個 testId 的暫存區，直接忽略
+
+      // 只有當有 log 內容時才建立 logItem
+      if (log) {
+        const logItem: LogItem = {
+          text: `[${new Date().toLocaleTimeString()}] ${log}`,
+          color: colorMap[type as BackendMessageType]
+        };
+        logs.push(logItem);
+      }
+
+      // 3. 只有當測試結束 (success/error) 時，才一次性更新 UI 並顯示通知
+      if (type === "success" || type === "error") {
+        // 將暫存的日誌寫入響應式的 allLogs
+        allLogs.value.set(testId, [...logs]);
+        // 清空暫存
+        tempLogs.delete(testId);
+        // 顯示本地通知
+        message(msg, { type: type });
+      }
+    } catch (e) {
+      console.warn("Error processing WebSocket message:", messageData, e);
+    }
+  };
+
   /** 透過已建立的 WebSocket 連線發送測試指令 */
   const stWsExecuteTest = (testId: string) => {
     if (wsInstance.value && isWsOpen.value) {
-      wsInstance.value.send(testId);
+      const command = {
+        command: "execute_test",
+        test_id: testId
+      };
+      wsInstance.value.send(JSON.stringify(command));
       result.value = `已發送測試指令: ${testId}`;
 
-      const logs = allLogs.value.get(testId);
-      if (logs) {
-        logs.push({
-          text: `[${new Date().toLocaleTimeString()}] 已傳送測試ID至後端: ${testId}`
-        });
-      }
+      // **重要**：在觸發測試時，清空 UI 日誌和暫存日誌
+      allLogs.value.set(testId, []);
+      tempLogs.set(testId, []);
+      // 可以在 UI 上顯示一條開始訊息
+      allLogs.value.get(testId)?.push({
+        text: `[${new Date().toLocaleTimeString()}] 已傳送測試ID至後端: ${testId}`
+      });
     } else {
-      result.value = "WebSocket 尚未連線，請先連線。";
+      // 拋出錯誤讓 UI 層捕獲
+      const errorMsg = "WebSocket 尚未連線，無法執行測試。";
+      message(errorMsg, { type: "error" });
+      throw new Error(errorMsg);
+    }
+  };
+
+  /** 透過已建立的 WebSocket 連線發送停止指令 */
+  const stWsStopTest = (testId: string) => {
+    if (wsInstance.value && isWsOpen.value) {
+      // 根據後端 API 設計，發送一個停止指令
+      // 這裡假設後端接受 JSON 格式的指令
+      const command = {
+        command: "stop",
+        test_id: testId
+      };
+      wsInstance.value.send(JSON.stringify(command));
+    } else {
+      message("WebSocket 尚未連線，無法停止測試。", { type: "error" });
     }
   };
 
@@ -178,6 +193,7 @@ export const useTestOperateStore = defineStore("testOperate", () => {
     stApiCheckConnection,
     stApiExecuteTest,
     stWsConnect,
-    stWsExecuteTest
+    stWsExecuteTest,
+    stWsStopTest
   };
 });
