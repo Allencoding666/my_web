@@ -1,47 +1,95 @@
-import { apiCheckConnection, apiExecuteTest } from "@/api/testOperate";
+import {
+  apiGetStatus,
+  apiPostStopTest,
+  apiGetLog,
+  apiGetReport,
+  type ReportInfo
+} from "@/api/testOperate";
 import { wsTestUrl } from "@/api/utils";
 import { message } from "@/utils/message";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-// 定義 UI 函式庫接受的訊息類型
-type LogColor = "inherit" | "orange" | "red" | "green";
-
-// 定義後端 WebSocket 可能傳來的類型 (用於顏色對照)
-type BackendMessageType = "info" | "warning" | "error" | "success";
-
-interface LogItem {
-  text: string;
-  color?: LogColor;
-}
-
 export const useTestOperateStore = defineStore("testOperate", () => {
-  const result = ref("default");
   const wsInstance = ref<WebSocket | null>(null);
   const isWsOpen = ref(false);
-  const allLogs = ref(new Map<string, LogItem[]>());
-  // 新增一個暫存日誌的地方，它不是響應式的
-  const tempLogs = new Map<string, LogItem[]>();
-  // 建立一個強型別的對照表，來針對後端回傳的資料，決定log字體顏色
-  const colorMap: Record<BackendMessageType, LogColor> = {
-    info: "inherit",
-    warning: "orange",
-    error: "red",
-    success: "green"
-  };
+  const testList = ref<any[]>([]);
 
-  const stApiCheckConnection = async () => {
+  const stApiGetStatus = async () => {
     try {
-      const res = await apiCheckConnection();
-      result.value = `連線成功: ${JSON.stringify(res)}`;
+      const resp = await apiGetStatus();
+      const testDataObject = resp.data;
+
+      if (testDataObject && typeof testDataObject === "object") {
+        // 將後端回傳的物件轉換為陣列
+        testList.value = Object.keys(testDataObject).map(testId => ({
+          testId: testId,
+          ...testDataObject[testId]
+        }));
+      }
     } catch (error) {
-      result.value = `連線失敗: ${error}`;
+      message(`Error: 獲取Test Status失敗，${error.message}`, {
+        type: "error"
+      });
     }
-    return result.value;
   };
 
-  const stApiExecuteTest = async () => {
-    return await apiExecuteTest();
+  const stApiStopTest = async (testId: string) => {
+    try {
+      const resp = await apiPostStopTest(testId);
+      if (resp.data.level === "error") {
+        // 停止測試遇到異常才推播觸發停止測試的ws，其他情況，會推播給所有有追蹤該testId的ws
+        message(resp.data.message, { type: resp.data.level });
+      }
+      // 停止後立即重新獲取狀態以更新 UI
+      await stApiGetStatus();
+    } catch (error) {
+      message(`Error: 停止測試失敗，${error.message}`, { type: "error" });
+    }
+  };
+
+  const stApiGetLog = async (testId: string) => {
+    try {
+      return await apiGetLog(testId);
+    } catch (error) {
+      message(`Error: 獲取Test Log失敗，${error.message}`, { type: "error" });
+    }
+  };
+
+  const stApiGetReport = async (testId: string): Promise<ReportInfo[]> => {
+    try {
+      const resp = await apiGetReport(testId); // resp 的型別現在是 ReportListResponse
+      return resp.reports; // 直接從 resp 取用 reports 陣列
+    } catch (error) {
+      message(`Error: 獲取測試報告列表失敗，${error.message}`, {
+        type: "error"
+      });
+      return []; // 錯誤時返回一個空的報告陣列，型別一致
+    }
+  };
+
+  /**
+   * 處理 WebSocket 訊息的共用邏輯
+   * @param msg 從 WebSocket 收到的原始訊息字串
+   */
+  const handleWsMessage = (msg: string) => {
+    try {
+      const { type, data } = JSON.parse(msg);
+
+      if (type === "message") {
+        // 顯示後端推播的通用訊息
+        if (data.message) message(data.message, { type: data.level });
+      } else if (type === "test_result") {
+        console.log("type", type);
+        stApiGetStatus();
+      }
+    } catch (e) {
+      console.warn(
+        `Error: error processing WebSocket message，${msg} (${e})`,
+        msg,
+        e
+      );
+    }
   };
 
   /** 建立並管理一個持久的 WebSocket 連線 */
@@ -59,16 +107,15 @@ export const useTestOperateStore = defineStore("testOperate", () => {
       if (wsInstance.value && !isWsOpen.value) {
         wsInstance.value.onopen = () => {
           isWsOpen.value = true;
-          result.value = "WebSocket 連線成功！";
           console.log("WebSocket connected");
           resolve();
         };
         wsInstance.value.onerror = error => {
+          const errorMsg = "WebSocket is connecting but an error occurred.";
           isWsOpen.value = false;
           wsInstance.value = null;
-          result.value = `WebSocket 發生錯誤: ${error}`;
-          console.error("WebSocket error:", error);
-          reject(error);
+          console.error("WebSocket error:", errorMsg, error);
+          reject(new Error(errorMsg));
         };
         return;
       }
@@ -77,7 +124,6 @@ export const useTestOperateStore = defineStore("testOperate", () => {
 
       wsInstance.value.onopen = () => {
         isWsOpen.value = true;
-        result.value = "WebSocket 連線成功！";
         console.log("WebSocket connected");
         resolve(); // 連線成功時 resolve Promise
       };
@@ -87,113 +133,55 @@ export const useTestOperateStore = defineStore("testOperate", () => {
       wsInstance.value.onclose = () => {
         isWsOpen.value = false;
         wsInstance.value = null;
-        result.value = "WebSocket 連線已中斷。";
         console.log("WebSocket disconnected");
       };
 
       wsInstance.value.onerror = error => {
+        const errorMsg = "WebSocket connection failed.";
         isWsOpen.value = false;
         wsInstance.value = null;
-        result.value = `WebSocket 發生錯誤: ${error}`;
-        console.error("WebSocket error:", error);
-        reject(error); // 連線失敗時 reject Promise
+        console.error("WebSocket error:", errorMsg, error);
+        reject(new Error(errorMsg)); // 連線失敗時 reject Promise
       };
     });
   };
 
-  /**
-   * 處理 WebSocket 訊息的共用邏輯
-   * @param messageData 從 WebSocket 收到的已解析的 JSON 資料
-   */
-  const handleWsMessage = (messageData: any) => {
-    try {
-      const { test_id: testId, type, message: msg, log } = messageData;
-
-      if (!testId) {
-        console.warn("Received a message without testId:", messageData);
-        return;
-      }
-
-      // 確保 allLogs 中有該 testId 的條目
-      if (!allLogs.value.has(testId)) {
-        allLogs.value.set(testId, []);
-      }
-      // 將log存入暫存區
-      const logs = tempLogs.get(testId);
-      if (!logs) return; // 如果沒有這個 testId 的暫存區，直接忽略
-
-      // 只有當有 log 內容時才建立 logItem
-      if (log) {
-        const logItem: LogItem = {
-          text: `[${new Date().toLocaleTimeString()}] ${log}`,
-          color: colorMap[type as BackendMessageType]
-        };
-        logs.push(logItem);
-      }
-
-      // 3. 只有當測試結束 (success/error) 時，才一次性更新 UI 並顯示通知
-      if (type === "success" || type === "error") {
-        // 將暫存的日誌寫入響應式的 allLogs
-        allLogs.value.set(testId, [...logs]);
-        // 清空暫存
-        tempLogs.delete(testId);
-        // 顯示本地通知
-        message(msg, { type: type });
-      }
-    } catch (e) {
-      console.warn("Error processing WebSocket message:", messageData, e);
-    }
-  };
-
   /** 透過已建立的 WebSocket 連線發送測試指令 */
-  const stWsExecuteTest = (testId: string) => {
-    if (wsInstance.value && isWsOpen.value) {
+  const stWsExecuteTest = async (testId: string) => {
+    try {
+      if (!wsInstance.value || !isWsOpen.value) {
+        // 等待連線成功
+        await stWsConnect("/test_manager");
+      }
       const command = {
         command: "execute_test",
         test_id: testId
       };
       wsInstance.value.send(JSON.stringify(command));
-      result.value = `已發送測試指令: ${testId}`;
-
-      // **重要**：在觸發測試時，清空 UI 日誌和暫存日誌
-      allLogs.value.set(testId, []);
-      tempLogs.set(testId, []);
-      // 可以在 UI 上顯示一條開始訊息
-      allLogs.value.get(testId)?.push({
-        text: `[${new Date().toLocaleTimeString()}] 已傳送測試ID至後端: ${testId}`
-      });
-    } else {
-      // 拋出錯誤讓 UI 層捕獲
-      const errorMsg = "WebSocket 尚未連線，無法執行測試。";
-      message(errorMsg, { type: "error" });
-      throw new Error(errorMsg);
+      stApiGetStatus();
+    } catch (error) {
+      message(`Error: 執行測試，發生錯誤: ${error}`, { type: "error" });
     }
   };
 
-  /** 透過已建立的 WebSocket 連線發送停止指令 */
-  const stWsStopTest = (testId: string) => {
-    if (wsInstance.value && isWsOpen.value) {
-      // 根據後端 API 設計，發送一個停止指令
-      // 這裡假設後端接受 JSON 格式的指令
-      const command = {
-        command: "stop",
-        test_id: testId
-      };
-      wsInstance.value.send(JSON.stringify(command));
-    } else {
-      message("WebSocket 尚未連線，無法停止測試。", { type: "error" });
+  const stWsDisconnect = () => {
+    if (wsInstance.value) {
+      console.log("Closing WebSocket connection due to page unload.");
+      // 使用 1000 (Normal Closure) 代碼，這是客戶端允許使用的標準代碼
+      wsInstance.value.close(1000, "Page is unloading");
     }
   };
 
   return {
-    result,
     wsInstance,
     isWsOpen,
-    allLogs,
-    stApiCheckConnection,
-    stApiExecuteTest,
+    testList,
+    stApiGetStatus,
+    stApiStopTest,
+    stApiGetLog,
+    stApiGetReport,
     stWsConnect,
     stWsExecuteTest,
-    stWsStopTest
+    stWsDisconnect
   };
 });

@@ -2,12 +2,12 @@ const Layout = () => import("@/layout/index.vue");
 
 export default {
   path: "/testList",
-  name: "TestList123123",
+  name: "TestList",
   component: Layout,
   redirect: "/testList/index",
   meta: {
-    title: "測試列表12331233",
-    rank: 9
+    title: "測試列表",
+    rank: 1
   },
   children: [
     {

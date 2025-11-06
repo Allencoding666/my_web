@@ -25,16 +25,20 @@ export default ({ mode }: ConfigEnv): UserConfigExport => {
       host: "0.0.0.0",
       // 本地跨域代理 https://cn.vitejs.dev/config/server-options.html#server-proxy
       proxy: {
-        "/testapi": {
+        "/api": {
           // 这里填写后端地址
           target: "http://127.0.0.1:8000",
           changeOrigin: true,
-          rewrite: path => path.replace(/^\/testapi/, "")
+          rewrite: path => path.replace(/^\/api/, "tests/api")
         },
         "/ws": {
           target: "ws://127.0.0.1:8000",
           ws: true,
-          rewrite: path => path.replace(/^\/ws/, "")
+          rewrite: path => path.replace(/^\/ws/, "tests/ws")
+        },
+        "/reports": {
+          target: "http://127.0.0.1:8000",
+          changeOrigin: true
         }
       },
       // 预热文件以提前转换和缓存结果，降低启动期间的初始页面加载时长并防止转换瀑布

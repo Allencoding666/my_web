@@ -36,7 +36,7 @@ import { removeToken, setToken } from "./auth";
   removeToken();
 
   const defaultUser = {
-    username: "tester",
+    username: "Tester",
     roles: ["admin"],
     accessToken: "eyJhbGciOiJIUzUxMiJ9",
     expires: new Date("2099-12-31T23:59:59.999Z"),

@@ -20,6 +20,12 @@ export function useTranslationLang(ref?: Ref) {
     ref && handleResize(ref.value);
   }
 
+  function translationZhTw() {
+    $storage.locale = { locale: "zh_tw" };
+    locale.value = "zh_tw";
+    ref && handleResize(ref.value);
+  }
+
   watch(
     () => locale.value,
     () => {
@@ -36,6 +42,7 @@ export function useTranslationLang(ref?: Ref) {
     route,
     locale,
     translationCh,
-    translationEn
+    translationEn,
+    translationZhTw
   };
 }

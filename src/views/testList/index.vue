@@ -8,29 +8,21 @@ defineOptions({
   name: "testList"
 });
 
-const testOperateStore = useTestOperateStore();
-const { stApiCheckConnection, stApiExecuteTest, stWsConnect, stWsExecuteTest } =
-  testOperateStore;
-const { result, wsInstance, isWsOpen } = storeToRefs(testOperateStore);
-
-const { columns, filterTableData } = useColumns();
+const search = ref("");
+const { columns, filterTableData } = useColumns(search);
 </script>
-
-<!-- <template>
-  <p>測試列表的template</p>
-  <button @click="check">確認連線</button>
-  <div v-if="result === 'default'">
-    <p>尚未測試連線</p>
-  </div>
-  <div v-else>
-    <p>{{ result }}</p>
-  </div>
-  <br />
-  <button @click="execute">執行測試</button>
-</template> -->
 
 <template>
   <div>
+    <div style="margin-bottom: 16px">
+      <el-input
+        v-model="search"
+        size="default"
+        clearable
+        placeholder="輸入測試id進行搜尋"
+        style="width: 240px"
+      />
+    </div>
     <pure-table :data="filterTableData" :columns="columns" />
   </div>
 </template>

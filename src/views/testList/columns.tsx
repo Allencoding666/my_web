@@ -1,26 +1,55 @@
+import { computed, onMounted, onBeforeUnmount, type Ref } from "vue";
+import { storeToRefs } from "pinia";
 import { message } from "@/utils/message";
-import { tableData } from "./data";
-import { ref, computed, onMounted } from "vue";
 import { useTestOperateStore } from "@/store/modules/testOperate";
 import { addDrawer } from "@/components/ReDrawer/index";
-import { storeToRefs } from "pinia";
+import { Loading } from "@element-plus/icons-vue";
 
-export function useColumns() {
-  const search = ref("");
+export function useColumns(search: Ref<string>) {
   const testOperateStore = useTestOperateStore();
 
-  // 從 store 中取得 allLogs 的響應式引用
-  const { allLogs } = storeToRefs(testOperateStore);
+  // 從 store 中取得 testList 和 tests 的響應式引用
+  const { testList } = storeToRefs(testOperateStore);
 
   // 在組件掛載時建立 WebSocket 連線
   onMounted(() => {
-    testOperateStore.stWsConnect("tests/ws/test_manager").catch(error => {
+    // 初始載入一次狀態
+    testOperateStore.stApiGetStatus();
+    testOperateStore.stWsConnect("/test_manager").catch(error => {
       message(`WebSocket 連線失敗: ${error.message}`, { type: "error" });
     });
+
+    window.addEventListener("beforeunload", testOperateStore.stWsDisconnect);
   });
 
+  onBeforeUnmount(() => {
+    window.removeEventListener("beforeunload", testOperateStore.stWsDisconnect);
+  });
+
+  /**
+   * 一個高階函式，用於包裝 cellRenderer。
+   * 當 row.status 為 'running' 時，顯示載入圖示，否則顯示原始內容。
+   * @param originalRenderer - 原始的 cellRenderer 函式
+   */
+  const withLoadingState = (
+    originalRenderer: (scope: { row?: any }) => JSX.Element | null
+  ) => {
+    return (scope: { row?: any }) => {
+      if (scope.row && scope.row.status === "running") {
+        return (
+          <div class="flex items-center justify-center">
+            <el-icon class="is-loading" size="20">
+              <Loading />
+            </el-icon>
+          </div>
+        );
+      }
+      return originalRenderer(scope);
+    };
+  };
+
   const filterTableData = computed(() =>
-    tableData.filter(
+    testList.value.filter(
       data =>
         !search.value ||
         data.testId.toLowerCase().includes(search.value.toLowerCase())
@@ -28,51 +57,27 @@ export function useColumns() {
   );
 
   const handleExcuteTest = async row => {
-    const testId = row.testId;
-    message(`執行測試 ${testId}，點擊 LiveMessage 可以查看即時訊息`);
-
-    // 每次執行測試時，為該 testId 建立一個新的 logs 陣列
-    try {
-      testOperateStore.stWsExecuteTest(row.testId);
-    } catch (error) {
-      message(`執行測試 ${testId} 失敗，請點擊 LiveMessage 查看即時訊息`, {
-        type: "error"
-      });
-      // 將錯誤訊息記錄到 Log 中
-      const logs = allLogs.value.get(testId);
-      if (logs) {
-        logs.push({ text: `[ERROR] ${error.message}`, color: "red" });
-      }
-      return; // 發生錯誤時，中斷後續執行
-    }
+    await testOperateStore.stWsExecuteTest(row.testId);
   };
 
-  const liveMessage = row => {
+  const testLog = async row => {
     const testId = row.testId;
+    // 使用 await 等待 stApiGetLog 的 Promise 解析，以取得後端回傳的 log
+    const { data } = await testOperateStore.stApiGetLog(row.testId);
 
     addDrawer({
-      title: `測試 ${testId} 即時訊息`,
+      title: `最後一次測試 ${testId} 的log`,
       size: 700,
-      // 讓 contentRenderer 成為一個響應式的渲染函式
       contentRenderer: () => {
-        // 在渲染函式內部訪問響應式資料
-        const logs = allLogs.value.get(testId) ?? [];
+        // 直接使用從 API 取得的 log 資料
         return (
           <div>
-            {logs.length === 0 ? (
+            {!data.log ? (
               <p>暫無訊息</p>
             ) : (
-              logs.map(logItem => (
-                <p
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    margin: 0,
-                    color: logItem.color ?? "inherit"
-                  }}
-                >
-                  {logItem.text}
-                </p>
-              ))
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                {data.log}
+              </pre>
             )}
           </div>
         );
@@ -80,60 +85,163 @@ export function useColumns() {
     });
   };
 
+  const testReport = async row => {
+    const testId = row.testId;
+    const data = await testOperateStore.stApiGetReport(row.testId);
+
+    addDrawer({
+      title: `${testId} 的測試報告`,
+      size: 700,
+      contentRenderer: () => {
+        return (
+          <div>
+            {data.length === 0 ? (
+              <p>暫無報告</p>
+            ) : (
+              <ul>
+                {data.map(report => (
+                  <li key={report.file_name} style={{ marginBottom: "8px" }}>
+                    <a
+                      href={report.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {report.file_name}
+                    </a>
+                    <span style={{ marginLeft: "10px", color: "#888" }}>
+                      ({report.created_at})
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      }
+    });
+  };
   const handleStopTest = row => {
     const testId = row.testId;
-    testOperateStore.stWsStopTest(testId);
-    message(`已送出停止測試 ${testId} 的請求`, { type: "warning" });
+    testOperateStore.stApiStopTest(testId);
   };
 
   const columns: TableColumnList = [
     {
       label: "測試id",
-      prop: "testId"
+      prop: "testId",
+      align: "center"
     },
     {
       label: "描述",
-      prop: "description"
+      prop: "description",
+      align: "center"
     },
     {
       label: "測試結果",
-      prop: "testResult"
+      prop: "last_result",
+      align: "center",
+      cellRenderer: withLoadingState(({ row }) => {
+        if (!row.last_result) return null;
+
+        const resultMap = {
+          PASS: { type: "success" },
+          FAIL: { type: "danger" },
+          ERROR: { type: "danger" },
+          "NO TEST LOG": { type: "warning" }
+        };
+
+        const resultInfo = resultMap[row.last_result] || {
+          type: "info" // 未知結果使用預設樣式
+        };
+        return (
+          <el-tag
+            disable-transitions={true}
+            effect={"dark"}
+            type={resultInfo.type}
+          >
+            {row.last_result}
+          </el-tag>
+        );
+      })
     },
     {
-      align: "right",
-      // 自定义表头，tsx用法
-      headerRenderer: () => (
-        <el-input
-          v-model={search.value}
-          size="default"
-          clearable
-          placeholder="輸入測試ID進行搜尋"
-        />
-      ),
+      label: "測試時間",
+      prop: "start_time",
+      align: "center",
+      cellRenderer: withLoadingState(({ row }) => <span>{row.start_time}</span>)
+    },
+    {
+      label: "執行時間(秒)",
+      prop: "execution_time",
+      align: "center",
+      cellRenderer: withLoadingState(({ row }) => (
+        <span>{row.execution_time}</span>
+      ))
+    },
+    {
+      label: "測試狀態",
+      prop: "status",
+      align: "center",
+      cellRenderer: ({ row }) => {
+        const statusMap = {
+          idle: { text: "閒置中", type: "info" },
+          running: { text: "執行中", type: "primary" },
+          stopped: { text: "已停止", type: "warning" }
+        };
+
+        const statusInfo = statusMap[row.status] || {
+          text: row.status, // 如果出現未知的狀態，直接顯示原文
+          type: "warning"
+        };
+
+        return <el-tag type={statusInfo.type}>{statusInfo.text}</el-tag>;
+      }
+    },
+    {
+      label: "操作",
+      prop: "actions",
+      align: "center",
       cellRenderer: ({ row }) => (
-        <>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            alignItems: "center"
+          }}
+        >
           <el-button
-            size="default"
             type="primary"
+            style={{ margin: 0 }}
             onClick={() => handleExcuteTest(row)}
+            loading={row.status === "running"}
           >
-            ExcuteTest
+            執行測試
           </el-button>
           <el-button
-            size="default"
-            type="primary"
-            onClick={() => liveMessage(row)}
-          >
-            LiveMessage
-          </el-button>
-          <el-button
-            size="default"
             type="danger"
+            style={{ margin: 0 }}
             onClick={() => handleStopTest(row)}
+            disabled={row.status !== "running"}
           >
-            StopTest
+            中斷測試
           </el-button>
-        </>
+          <el-button
+            type="primary"
+            style={{ margin: 0 }}
+            onClick={() => testLog(row)}
+            loading={row.status === "running"}
+          >
+            測試日誌
+          </el-button>
+          <el-button
+            type="primary"
+            style={{ margin: 0 }}
+            onClick={() => testReport(row)}
+          >
+            測試報告
+          </el-button>
+        </div>
       )
     }
   ];

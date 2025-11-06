@@ -1,11 +1,11 @@
 {
   "Version": "6.1.0",
-  "Title": "PureAdmin",
+  "Title": "AutoTest",
   "FixedHeader": true,
   "HiddenSideBar": false,
   "MultiTagsCache": false,
   "KeepAlive": true,
-  "Locale": "en",
+  "Locale": "zh_tw",
   "Layout": "vertical",
   "Theme": "light",
   "DarkMode": true,
